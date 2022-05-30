@@ -3,17 +3,100 @@ use std::time::{Duration};
 use std::thread::sleep;
 use std::io;
 use std::fs::File;
-use nix::ioctl_readwrite_buf;
-use nix::errno::Errno;
+use nix::{ioctl_read_buf,ioctl_readwrite_buf};
+use nix::errno::{errno};
+use errno::Errno;
 use std::os::unix::io::AsRawFd;
+use std::env;
+use nix::libc::c_int;
+use hex;
 //use crate::errno::Errno;
 use hexdump;
 
 fn main() {
   println!("OBSBOT Meet 4K controller");
   //list_usb().expect("Failed");
-  v4l_ioctl("/dev/video2").expect("Failed");
+  let args: Vec<_> = env::args().collect();
+  match &args[1][..] {
+    "get" => dump(&args[2]).expect("Failed"),
+    "set" => set(&args[2], &args[3..]).expect("Failed"),
+    _ => panic!("Unknown command {:?}", args)
+  }
 }
+
+fn dump(video : &str) -> Result<(), io::Error> {
+  println!("Dump {}", video);
+  let mut camera = File::open(video)?;
+
+//  let result = set_cur(&camera, &CAMERA_BG_SOLID);
+//  let result = set_cur(&camera, &CAMERA_EFFECT_BG);
+  let result = dump_cur(&camera, 0x6, 0x6);
+  match result {
+    Ok(_) => return Ok(()),
+    Err(error) => panic!("Error {:?}", error)
+  }
+}
+
+fn set(video : &str, params : & [ String ]) -> Result<(), io::Error> {
+  println!("Set {}", video);
+  let mut camera = File::open(video)?;
+  let mut data = [ 0u8; 60 ];
+
+  println!("Decode {:?}", &params[0][..]);
+  //hex::decode_to_slice(&params[0][..], &mut data).expect("Decoding failed");
+  let mut decoded = hex::decode(&params[0][..]).expect("Decoding failed");
+  println!("Decoded {:?}", decoded);
+
+  data[..decoded.len()].copy_from_slice(&decoded);
+
+  let result = set_cur(&camera, 0x6, 0x6, &mut data);
+  match result {
+    Ok(_) => return Ok(()),
+    Err(error) => panic!("Error {:?}", error)
+  }
+}
+
+// 00 01 00 disable replacement
+// 00 01 01 enable replacement
+// 00 01 02 enabe autoframeing
+
+// 01 01 00 HDR off
+// 01 01 01 HRD on
+
+// 03 01 00 FACE AE OFF
+// 03 01 01 FACE AE ON
+
+// 04 01 02 //65 degree view
+// 04 01 01 //78 degree view
+// 04 01 00 //85 degree view
+
+// 05 01 12 blur
+// 05 01 01 solid 
+// 05 01 11 replace
+
+// 06 01xx xx->00-64 (100) blur level
+
+// 07 01 00 button default
+// 07 01 01 button rotation
+
+// 0a 01 00 noise reduction off
+// 0a 01 01 noise reduction on
+
+// 10 01 00 blue
+// 10 01 01 green
+
+// 0d 02 00 ff auto-frame group
+// 0d 02 01 00 auto-frame single close up
+// 0d 02 01 01 auto-frame single upper-body
+
+// 0e 02 00 00 pic 1
+// 0e 02 00 01 pic 2
+// 0e 02 00 02 pic 3
+
+// 0b 02 1e00 autosleep 30s (seconds small byte first)
+// 0b 02 7800 autosleep 2 min
+// 0b 02 5802 autosleep 10 min
+
 
 const CAMERA_BG_SOLID : [ u8 ; 3] = [ 0x05, 0x01, 0x01 ];
 const CAMERA_BG_BITMAP : [ u8 ; 3] = [ 0x05, 0x01, 0x11 ];
@@ -37,49 +120,86 @@ pub struct uvc_xu_control_query {
 const UVCIOC_CTRL_MAGIC: u8 = b'u';        // Defined in linux/uvcvideo.h
 const UVCIOC_CTRL_QUERY_MESSAGE: u8 = 0x21; // Defined in linux/uvcvideo.h
 ioctl_readwrite_buf!(uvcioc_ctrl_query, UVCIOC_CTRL_MAGIC, UVCIOC_CTRL_QUERY_MESSAGE, uvc_xu_control_query);
+ioctl_read_buf!(uvcioc_ctrl_query_read, UVCIOC_CTRL_MAGIC, UVCIOC_CTRL_QUERY_MESSAGE, uvc_xu_control_query);
 
-fn set_cur(dev : std::fs::File, _data : & [u8]) -> Result<i32, Errno> {
-  let mut data = [ 0u8; 60 ];
-  
+/* A.8. Video Class-Specific Request Codes */
+const UVC_RC_UNDEFINED : u8  = 0x00;
+const UVC_SET_CUR  : u8      = 0x01;
+const UVC_GET_CUR  : u8      = 0x81;
+const UVC_GET_MIN  : u8      = 0x82;
+const UVC_GET_MAX  : u8      = 0x83;
+const UVC_GET_RES  : u8      = 0x84;
+const UVC_GET_LEN  : u8      = 0x85;
+const UVC_GET_INFO : u8      = 0x86;
+const UVC_GET_DEF  : u8      = 0x87;
+
+fn uvc_io(dev : & std::fs::File, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>  {
   let mut query = uvc_xu_control_query { 
-    unit: 0x6,
-    selector: 0x6,
-//    query: 0x81, // UVC_GET_CUR
-    query: 0x85, // UVC_GET_LEN
-    size: 2,
-//    size: 0x60,
+    unit: unit,
+    selector: selector,
+    query: query,
+    size: data.len() as u16,
     data: data.as_mut_ptr()
   };
+
   unsafe {
-    let result = uvcioc_ctrl_query(dev.as_raw_fd(), &mut [query]);
-    println!("{} {}", data[0], data[1]);
+    match uvcioc_ctrl_query(dev.as_raw_fd(), &mut [query]) {
+      Ok(result) => return Ok(result),
+      _ => return Err(errno::Errno(errno()))
+    }
   }
-
-  data[.._data.len()].copy_from_slice(&_data);
-
-  let mut query = uvc_xu_control_query { 
-    unit: 0x6,
-    selector: 0x6,
-    query: 0x1, // UVC_GET_CUR
-    size: 60,
-    data: data.as_mut_ptr()
-  };
-  unsafe {
-    let result = uvcioc_ctrl_query(dev.as_raw_fd(), &mut [query]);
-    println!("{} {}", data[0], data[1]);
-    result
-  }
-
 }
 
-fn v4l_ioctl(video : &str) -> Result<u8, io::Error> {
-  let mut camera = File::open(video)?;
+fn uvcioc_get_len(dev : & std::fs::File, unit: u8, selector: u8) -> Result<usize, Errno> {
+  let mut data = [ 0u8; 2 ];
 
-//  let result = set_cur(camera, &CAMERA_BG_SOLID);
-  let result = set_cur(camera, &CAMERA_EFFECT_BG);
-  match result {
-    Ok(n) => return Ok(u8::try_from(n).ok().unwrap()),
-    Err(error) => panic!("Error {:?}", error)
+  return match uvc_io(dev, unit, selector, UVC_GET_LEN, &mut data) {
+    Ok(_) => Ok(u16::from_le_bytes(data).into()),
+    Err(err) => Err(err)
+  }
+}
+
+fn get_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [ u8 ] ) -> Result<(), Errno> {
+  // always call get_len first
+  match uvcioc_get_len(&dev, unit, selector) {
+    Ok(size) => {
+      if data.len() < size {
+        println!("Got size {}", size); 
+        return Err(errno::Errno(1)) 
+      }
+    },
+    Err(err) => return Err(err)
+  };
+
+  // Why not &mut data here?
+  return match uvc_io(&dev, unit, selector, UVC_GET_CUR, data) {
+    Ok(_) => return Ok(()),
+    Err(err) => Err(err)
+  }
+}
+
+fn dump_cur(dev : &std::fs::File, unit : u8, selector : u8) -> Result<(), Errno> {
+  let mut data = [ 0u8; 60 ];
+  get_cur(dev, unit, selector, &mut data)?;
+  println!("Data\n{:?}", data);
+  return Ok(());
+}
+
+// Need non-mut version
+fn set_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [u8]) -> Result<(), Errno> {
+  match uvcioc_get_len(&dev, unit, selector) {
+    Ok(size) => {
+      if data.len() > size {
+        println!("Got size {}", size); 
+        return Err(errno::Errno(1)) 
+      }
+    },
+    Err(err) => return Err(err)
+  };
+
+  return match uvc_io(&dev, unit, selector, UVC_SET_CUR, data) {
+    Ok(_) => return Ok(()),
+    Err(err) => Err(err)
   }
 }
 
@@ -180,36 +300,6 @@ fn list_usb() -> Result<u8, rusb::Error> {
 
 // e 2 0 1 pic 2
 // e 2 0 0 pic 1
-
-// 050112 blur
-// 050101 solid 
-// 050111 replace
-// 100100 blue
-// 100101 green
-// 0e020000 pic 1
-// 0e020001 pic 2
-// 0e020002 pic 3
-// 000100 disable replacement
-// 000101 enable replacement
-// 000102 enabe autoframeing
-// 0d0200ff auto-frame group
-// 0d020100 auto-frame single close up
-// 0d020101 auto-frame single upper-body
-// 040102 65 degree view
-// 040101 78 degree view
-// 040100 85 degree view
-// 010100 HDR off
-// 010101 HRD on
-// 030100 FACE AE OFF
-// 030101 FACE AE ON
-// 070100 button default
-// 070101 button rotation
-// 0a0100 noise reduction off
-// 0a0101 noise reduction on
-// 0b021e00 autosleep 30s
-// 0b027800 autosleep 2 min
-// 0b025802 autosleep 10 min
-// 0601xx xx->00-64 (100) blur level
 
 const BG_VIRTUAL_SOLID: [ u8; 60 ] = [ 0x05, 0x01, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 const BG_VIRTUAL_BG: [ u8; 60 ] = [ 0x05, 0x01, 0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
