@@ -15,10 +15,11 @@ use hexdump;
 
 fn main() {
   println!("OBSBOT Meet 4K controller");
-  //list_usb().expect("Failed");
+
   let args: Vec<_> = env::args().collect();
   match &args[1][..] {
     "get" => dump(&args[2]).expect("Failed"),
+    "cmd" => cmd(&args[2], &args[3..]).expect("Failed"),
     "set" => set(&args[2], &args[3..]).expect("Failed"),
     _ => panic!("Unknown command {:?}", args)
   }
@@ -28,9 +29,20 @@ fn dump(video : &str) -> Result<(), io::Error> {
   println!("Dump {}", video);
   let mut camera = File::open(video)?;
 
-//  let result = set_cur(&camera, &CAMERA_BG_SOLID);
-//  let result = set_cur(&camera, &CAMERA_EFFECT_BG);
   let result = dump_cur(&camera, 0x6, 0x6);
+  match result {
+    Ok(_) => return Ok(()),
+    Err(error) => panic!("Error {:?}", error)
+  }
+}
+
+fn cmd(video : &str, params : & [ String ]) -> Result<(), io::Error> {
+  println!("Set {}", video);
+  let mut camera = File::open(video)?;
+
+  let decoded = hex::decode(&params[0][..]).expect("Decoding failed");
+
+  let result = send_cmd(&camera, 0x6, 0x6, &decoded);
   match result {
     Ok(_) => return Ok(()),
     Err(error) => panic!("Error {:?}", error)
@@ -55,6 +67,7 @@ fn set(video : &str, params : & [ String ]) -> Result<(), io::Error> {
     Err(error) => panic!("Error {:?}", error)
   }
 }
+
 
 // 00 01 00 disable replacement
 // 00 01 01 enable replacement
@@ -181,7 +194,7 @@ fn get_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [ u8 ] ) 
 fn dump_cur(dev : &std::fs::File, unit : u8, selector : u8) -> Result<(), Errno> {
   let mut data = [ 0u8; 60 ];
   get_cur(dev, unit, selector, &mut data)?;
-  println!("Data\n{:?}", data);
+  hexdump::hexdump(&data);
   return Ok(());
 }
 
@@ -201,6 +214,14 @@ fn set_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [u8]) -> 
     Ok(_) => return Ok(()),
     Err(err) => Err(err)
   }
+}
+
+// Need non-mut version
+fn send_cmd(dev : &std::fs::File, unit : u8, selector : u8, cmd : & [u8]) -> Result<(), Errno> {
+  let mut data = [ 0u8; 60 ];
+  data[..cmd.len()].copy_from_slice(&cmd);
+
+  return set_cur(dev, unit, selector, &mut data);
 }
 
 struct CameraConfig {
