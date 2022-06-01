@@ -7,28 +7,98 @@ use nix::{ioctl_read_buf,ioctl_readwrite_buf};
 use nix::errno::{errno};
 use errno::Errno;
 use std::os::unix::io::AsRawFd;
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
 use std::env;
-use nix::libc::c_int;
+use std::str;
+use nix::libc::{c_int};
+use nix::libc;
 use hex;
+use glob::glob_with;
+use glob::MatchOptions;
 //use crate::errno::Errno;
 use hexdump;
 
 fn main() {
   println!("OBSBOT Meet 4K controller");
-
+  let mut data = [ 0x0u8 ];
   let args: Vec<_> = env::args().collect();
+
+  let mut camera = match open_camera(&args[2]) {
+    Ok(camera) => camera,
+    Err(err) => panic!("Can't find camera {:?}", err)
+  };
+  println!("Opened {:?}", camera);
+
   match &args[1][..] {
-    "get" => dump(&args[2]).expect("Failed"),
-    "cmd" => cmd(&args[2], &args[3..]).expect("Failed"),
-    "set" => set(&args[2], &args[3..]).expect("Failed"),
+    "info" => info(&camera).expect("Failed"),
+    "get" => dump(&camera).expect("Failed"),
+    "cmd" => cmd(&camera, &args[3..]).expect("Failed"),
+    "set" => set(&camera, &args[3..]).expect("Failed"),
     _ => panic!("Unknown command {:?}", args)
   }
 }
 
-fn dump(video : &str) -> Result<(), io::Error> {
-  println!("Dump {}", video);
-  let mut camera = File::open(video)?;
 
+// hint can be a name, e.g. /dev/video1
+// or a partial name, e.g. video1
+// or a partial string matching the driver or bus_info or card.
+// The first match will be selected
+// dev : & std::fs::File
+fn open_camera(hint : &str) -> Result<std::fs::File, errno::Errno> {
+//  match OpenOptions::new().nonblock(true).open(hint) {
+//  match OpenOptions::new().custom_flags(nix::libc::O_NONBLOCK).open(hint) {
+  match File::open(hint) {
+    Ok(file) => return Ok(file),
+    Err(err) => 0 // Why do we even need this line?
+  };
+
+  match File::open("/dev/".to_owned() + hint) {
+    Ok(file) => return Ok(file),
+    Err(err) => 0 // Why do we even need this line?
+  };
+
+  // enumerate all cameras and check for match
+  let options = MatchOptions {
+    case_sensitive: true,
+    require_literal_separator: true,
+    require_literal_leading_dot: true,
+  };
+  for entry in glob_with("/dev/video*", options).unwrap() {
+    if let Ok(path) = entry {
+      if let Ok(device) = File::open(&path) {
+        if let Ok(video_info) = v4l2_capability::new(&device) {
+          // println!("Info: {}\nCard: {:?}\nBus:  {:?}\ndc {:#X}", , video_info.card, video_info.bus_info, video_info.device_caps & 0x800000);
+          if (str::from_utf8(&video_info.card).unwrap().find(&hint).is_some() ||
+              str::from_utf8(&video_info.bus_info).unwrap().find(&hint).is_some()) &&
+             (video_info.device_caps & 0x800000 == 0) 
+          {
+            return Ok(device);
+          }
+        }
+      }
+    }
+  }
+  return Err(errno::Errno(errno())); // Why do we even need this line?
+}
+
+fn info(camera : & std::fs::File) -> Result<(), Errno> {
+  let mut query = [v4l2_capability { ..Default::default() }];
+
+  unsafe {
+    match ioctl_videoc_querycap(camera.as_raw_fd(), &mut query) {
+      Ok(result) => {
+        return Ok(());
+      },
+      _ => {
+        println!("Failed");
+        return Err(errno::Errno(errno()))
+      }
+    }
+  }
+}
+
+fn dump(camera : & std::fs::File) -> Result<(), io::Error> {
   let result = dump_cur(&camera, 0x6, 0x6);
   match result {
     Ok(_) => return Ok(()),
@@ -36,10 +106,7 @@ fn dump(video : &str) -> Result<(), io::Error> {
   }
 }
 
-fn cmd(video : &str, params : & [ String ]) -> Result<(), io::Error> {
-  println!("Set {}", video);
-  let mut camera = File::open(video)?;
-
+fn cmd(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
   let decoded = hex::decode(&params[0][..]).expect("Decoding failed");
 
   let result = send_cmd(&camera, 0x6, 0x6, &decoded);
@@ -49,15 +116,11 @@ fn cmd(video : &str, params : & [ String ]) -> Result<(), io::Error> {
   }
 }
 
-fn set(video : &str, params : & [ String ]) -> Result<(), io::Error> {
-  println!("Set {}", video);
-  let mut camera = File::open(video)?;
+fn set(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
   let mut data = [ 0u8; 60 ];
 
-  println!("Decode {:?}", &params[0][..]);
   //hex::decode_to_slice(&params[0][..], &mut data).expect("Decoding failed");
   let mut decoded = hex::decode(&params[0][..]).expect("Decoding failed");
-  println!("Decoded {:?}", decoded);
 
   data[..decoded.len()].copy_from_slice(&decoded);
 
@@ -118,7 +181,40 @@ const CAMERA_EFFECT_OFF : [ u8 ; 3] = [ 0x0, 0x01, 0x0 ];
 const CAMERA_EFFECT_BG : [ u8 ; 3] = [ 0x0, 0x01, 0x1 ];
 const CAMERA_EFFECT_TRACK : [ u8 ; 3] = [ 0x0, 0x01, 0x2 ];
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+#[derive(Default)]
+#[derive(Debug)]
+pub struct v4l2_capability {
+  driver       : [u8; 16],
+  card         : [u8; 32],
+  bus_info     : [u8; 32],
+  version      : u32,
+  capabilities : u32,
+  device_caps  : u32,
+  reserved     :[u32 ; 3],
+}
 
+impl v4l2_capability {
+  fn new(dev : & std::fs::File) -> Result<Self, errno::Errno> {
+    let mut query = [v4l2_capability { ..Default::default() }];
+
+    unsafe {
+      match ioctl_videoc_querycap(dev.as_raw_fd(), &mut query) {
+        Ok(result) => {
+          return Ok(query[0]);
+        },
+        _ => {
+          return Err(errno::Errno(errno()));
+        }
+      }
+    }
+  }
+}
+
+const VIDIOC_QUERYCAP_MAGIC: u8 = b'V';
+const VIDIOC_QUERYCAP_QUERY_MESSAGE: u8 = 0x00;
+ioctl_read_buf!(ioctl_videoc_querycap, VIDIOC_QUERYCAP_MAGIC, VIDIOC_QUERYCAP_QUERY_MESSAGE, v4l2_capability);
 
 #[repr(C)]
 pub struct uvc_xu_control_query {
