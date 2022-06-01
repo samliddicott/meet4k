@@ -107,13 +107,16 @@ fn dump(camera : & std::fs::File) -> Result<(), io::Error> {
 }
 
 fn cmd(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
-  let decoded = hex::decode(&params[0][..]).expect("Decoding failed");
+  for cmd in params.iter() {
+    let decoded = hex::decode(&cmd[..]).expect("Decoding failed");
 
-  let result = send_cmd(&camera, 0x6, 0x6, &decoded);
-  match result {
-    Ok(_) => return Ok(()),
-    Err(error) => panic!("Error {:?}", error)
+    let result = send_cmd(&camera, 0x6, 0x6, &decoded);
+    match result {
+      Ok(_) => (),
+      Err(error) => panic!("Error {:?}", error)
+    }
   }
+  return Ok(());
 }
 
 fn set(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
