@@ -3,6 +3,13 @@ Control extra features of OBSBOT Meet 4K Camera under Linux
 
 The first release is in rust, because I wanted something to make me learn rust, but I'll plan to code it as a C library with wxWidget UI app.
 
+Features:
+
+* Open camera using v4l2 UVC interface while camera is in use
+* Open camera using libusb (seizes control of the camera)
+
+The direct USB interface is not fully tested.
+
 ## Warning
 
 I've been at this for about a week, it's a bit of a mess, as I'm learning rust at the same time, but it works as a command line tool that you can bind to hotkeys.
@@ -19,9 +26,9 @@ UVC requires root access right now:
 
     sudo target/debug/meet4k <camera-reference> <cmd[=arg]> ...
 
-camera-reference can be the pathname, e.g. /dev/video10 or a sequence of text that will be matched against the camera *card name* or PCI *bus-info* fields as reported by the UVC interface. 
+camera-reference can be the pathname, e.g. /dev/video10 or a sequence of text that will be matched against the camera *card name* or PCI *bus-info* fields as reported by the UVC interface, or the USB vid:pid, e.g. 6e30:fef3 or text matching the USB product or manufacturer text, e.g. "Remo Tech"
 
-I find that OBSBOT is enough to match against the *card name*. To find suitable values try running the `info` command on all of your devices: `meet4k /dev/video/0 info`
+I find that OBSBOT is enough to match against the *card name* for the UVC interface. To find suitable values try running the `info` command on all of your devices: `meet4k /dev/video/0 info`
 
 ### examples
 
