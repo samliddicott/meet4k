@@ -3,6 +3,10 @@ Control extra features of OBSBOT Meet 4K Camera under Linux
 
 The first release is in rust, because I wanted something to make me learn rust, but I'll plan to code it as a C library with wxWidget UI app.
 
+## Warning
+
+I've been at this for about a week, it's a bit of a mess, as I'm learning rust at the same time, but it works as a command line tool that you can bind to hotkeys.
+
 ## Building
 
 Have rust installed:
@@ -13,11 +17,11 @@ Have rust installed:
 
 UVC requires root access right now:
 
-    target/debug/meet4k <camera-reference> <cmd[=arg]> ...
+    sudo target/debug/meet4k <camera-reference> <cmd[=arg]> ...
 
 camera-reference can be the pathname, e.g. /dev/video10 or a sequence of text that will be matched against the camera *card name* or PCI *bus-info* fields as reported by the UVC interface. 
 
-I find that OBSBOT is enough
+I find that OBSBOT is enough to match against the *card name*. To find suitable values try running the `info` command on all of your devices: `meet4k /dev/video/0 info`
 
 ### examples
 
@@ -29,11 +33,13 @@ This will set the background colour to green and activate it
 
     sudo env RUST_BACKTRACE=1 target/debug/meet4k OBSBOT bg-solid-green bg-solid effect-bg
 
-The shorter version is:
+The shorter version uses an exclamation mark, and is:
 
     sudo env RUST_BACKTRACE=1 target/debug/meet4k OBSBOT 'bg-solid-green!'
 
 Depending on your shell settings you may need to enclose the commands in *single quotes* '...' to protect the exclamation mark from shell interpolation
+
+Any command that depends on other commands has a version with a trailing exclamation mark to automatically invoke the other commands and make the setting active. Normally setting the background colour to green while in blur mode is *valid* but has no effect until solid-colour mode is active.
 
 ## Supported commands
 
@@ -49,7 +55,7 @@ e.g.
     Card: OBSBOT Meet 4K: OBSBOT Meet 4K 
     Bus : usb-0000:00:14.0-8.3.1.1
 
-Show unit 6 selector 6 memory dump. (You can't simply write this back with changes, an RPC mechanism is used)
+Show unit 6 selector 6 memory dump -- good for debugging. (You can't simply write this back with changes, an RPC mechanism is used)
 
     meet4k OBSBOT get
 
@@ -64,15 +70,19 @@ e.g.
     |00000000 00000000 00000000|          ............     00000030
                                                            0000003c
 
-Send an RPC to set some unit 6 selector 6 configuration. The first byte sometimes corresponds to an offset in the configuration. The second byte is the number of bytes to set. The third byte (and maybe 4th byte) are data sometimes little endian, sometimes big endian. 
+Send an RPC to set some unit 6 selector 6 configuration. The first byte sometimes corresponds to an offset in the configuration. The second byte is the number of bytes to set. The third byte (and maybe 4th byte) are data -- sometimes little endian, sometimes big endian. 
 
-This example turns of camera effects
+This example turns off camera effects
 
     meet4k OBSBOT hex=000100
 
 This example enables tracking mode
 
     meet4k OBSBOT hex=000102
+
+You cannot concatenate hex sequences together for multiple commands, instead send multiple hex= commands (on the same command line):
+
+    meet4k OBSBOT hex=000102 hex=0d020101
 
 But there are nicer commands to control camera effects, and they can be chained together
 
@@ -123,7 +133,7 @@ But there are nicer commands to control camera effects, and they can be chained 
     meet4k OBSBOT auto-frame-body   # track single upper body, when effect-track is enabled
     meet4k OBSBOT auto-frame-body!  # track single upper body, and enable effect-track
 
-    meet4k OBSBOT sleep=<s>         # turn on auto-sleep after s seconds, up to 65535 (I guess, it's t bytes)
+    meet4k OBSBOT sleep=<s>         # turn on auto-sleep after s seconds, up to 65535 (I guess, it's 2 bytes)
 
 
 ## Hacking Info
