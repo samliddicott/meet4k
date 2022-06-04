@@ -7,12 +7,12 @@ use nix::{ioctl_read_buf,ioctl_readwrite_buf};
 use nix::errno::{errno};
 use errno::Errno;
 use std::os::unix::io::AsRawFd;
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
+//use std::fs::OpenOptions;
+//use std::os::unix::fs::OpenOptionsExt;
 use std::env;
 use std::str;
 use nix::libc::{c_int};
-use nix::libc;
+//use nix::libc;
 use hex;
 use glob::glob_with;
 use glob::MatchOptions;
@@ -21,24 +21,16 @@ use hexdump;
 
 fn main() {
   println!("OBSBOT Meet 4K controller");
-  let mut data = [ 0x0u8 ];
   let args: Vec<_> = env::args().collect();
 
-  let mut camera = match open_camera(&args[2]) {
+  let camera = match Camera::new(&args[1]) {
     Ok(camera) => camera,
     Err(err) => panic!("Can't find camera {:?}", err)
   };
   println!("Opened {:?}", camera);
 
-  match &args[1][..] {
-    "info" => info(&camera).expect("Failed"),
-    "get" => dump(&camera).expect("Failed"),
-    "cmd" => cmd(&camera, &args[3..]).expect("Failed"),
-    "set" => set(&camera, &args[3..]).expect("Failed"),
-    _ => panic!("Unknown command {:?}", args)
-  }
+  cmds(&camera, &args[2..]);
 }
-
 
 // hint can be a name, e.g. /dev/video1
 // or a partial name, e.g. video1
@@ -50,12 +42,12 @@ fn open_camera(hint : &str) -> Result<std::fs::File, errno::Errno> {
 //  match OpenOptions::new().custom_flags(nix::libc::O_NONBLOCK).open(hint) {
   match File::open(hint) {
     Ok(file) => return Ok(file),
-    Err(err) => 0 // Why do we even need this line?
+    Err(_) => 0 // Why do we even need this line?
   };
 
   match File::open("/dev/".to_owned() + hint) {
     Ok(file) => return Ok(file),
-    Err(err) => 0 // Why do we even need this line?
+    Err(_) => 0 // Why do we even need this line?
   };
 
   // enumerate all cameras and check for match
@@ -82,107 +74,462 @@ fn open_camera(hint : &str) -> Result<std::fs::File, errno::Errno> {
   return Err(errno::Errno(errno())); // Why do we even need this line?
 }
 
-fn info(camera : & std::fs::File) -> Result<(), Errno> {
-  let mut query = [v4l2_capability { ..Default::default() }];
-
-  unsafe {
-    match ioctl_videoc_querycap(camera.as_raw_fd(), &mut query) {
-      Ok(result) => {
-        return Ok(());
-      },
-      _ => {
-        println!("Failed");
-        return Err(errno::Errno(errno()))
-      }
+fn info(camera : & Camera) -> Result<(), Errno> {
+  let dev = &camera.dev;
+  match v4l2_capability::new(&dev) {
+    Ok(video_info) => {
+      println!("Card: {}\nBus : {}", 
+               str::from_utf8(&video_info.card).unwrap(), 
+               str::from_utf8(&video_info.bus_info).unwrap());
+      return Ok(());
+    },
+    _ => {
+      println!("Failed");
+      return Err(errno::Errno(errno()))
     }
   }
 }
 
-fn dump(camera : & std::fs::File) -> Result<(), io::Error> {
-  let result = dump_cur(&camera, 0x6, 0x6);
+fn dump(camera : & Camera) -> Result<(), Errno> {
+  let dev = &camera.dev;
+  let result = dump_cur(&dev, 0x6, 0x6);
   match result {
     Ok(_) => return Ok(()),
     Err(error) => panic!("Error {:?}", error)
   }
 }
 
-fn cmd(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
-  for cmd in params.iter() {
-    let decoded = hex::decode(&cmd[..]).expect("Decoding failed");
-
-    let result = send_cmd(&camera, 0x6, 0x6, &decoded);
-    match result {
+fn cmds(camera : & Camera, cmds : & [ String ]) -> Result<(), Errno> {
+  for c in cmds {
+    match cmd(camera, c) {
       Ok(_) => (),
-      Err(error) => panic!("Error {:?}", error)
+      Err(error) => return Err(error),
     }
   }
   return Ok(());
 }
 
-fn set(camera : & std::fs::File, params : & [ String ]) -> Result<(), io::Error> {
+fn cmd(camera : & Camera, cmd : &str) -> Result<(), Errno> {
+  let mut parts = cmd.splitn(2, '=');
+  let cmd = parts.next().unwrap();
+  let arg = parts.next();
+
+  let result = match cmd {
+    "info" => info(&camera),
+    "get" => dump(&camera),
+
+    "effect-off" => camera.effect_off(),
+    "effect-bg" => camera.effect_bg(),
+    "effect-track" => camera.effect_track(),
+    "hdr-off" => camera.hdr_off(),
+    "hdr-on" => camera.hdr_on(),
+    "face-ae-off" => camera.face_ae_off(),
+    "face-ae-on" => camera.face_ae_on(),
+    "angle-65" => camera.angle_65(),
+    "angle-78" => camera.angle_78(),
+    "angle-85" => camera.angle_85(),
+    "bg-solid" => camera.bg_solid(),
+    "bg-solid!" => camera.bg_solid_now(),
+    "bi-bitmap" => camera.bg_bitmap(),
+    "bg-bitmap!" => camera.bg_bitmap_now(),
+    "bg-blur" => camera.bg_blur(),
+    "bg-blur!" => camera.bg_blur_now(),
+    "bg-blur-level" => {
+      match arg {
+        Some(arg) => match arg.parse::<u8>() {
+          Ok(arg) => camera.blur_level(arg),
+          Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+    "bg-blur-level!" => {
+      match arg {
+        Some(arg) => match arg.parse::<u8>() {
+          Ok(arg) => camera.blur_level_now(arg),
+          Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+    "button-default"      => camera.button_default(),
+    "button-rotate"       => camera.button_rotate(),
+    "noise-reduction-off" => camera.noise_reduction_off(),
+    "noise-reduction-on"  => camera.noise_reduction_on(),
+    "bg-solid-blue"       => camera.bg_solid_blue(),
+    "bg-solid-blue!"      => camera.bg_solid_blue_now(),
+    "bg-solid-green"      => camera.bg_solid_green(),
+    "bg-solid-green!"     => camera.bg_solid_green_now(),
+    "bg-solid-red"        => camera.bg_solid_red(),
+    "bg-solid-red!"       => camera.bg_solid_red_now(),
+    "bg-solid-black"      => camera.bg_solid_black(),
+    "bg-solid-black!"     => camera.bg_solid_black_now(),
+    "bg-solid-white"      => camera.bg_solid_white(),
+    "bg-solid-white!"     => camera.bg_solid_white_now(),
+    "auto-frame-group"    => camera.auto_frame_group(),
+    "auto-frame-group!"   => camera.auto_frame_group_now(),
+    "auto-frame-face"     => camera.auto_frame_face(),
+    "auto-frame-face!"    => camera.auto_frame_face_now(),
+    "auto-frame-body"     => camera.auto_frame_body(),
+    "auto-frame-body!"    => camera.auto_frame_body_now(),
+    "bg-bitmap"    => {
+      match arg {
+        Some(arg) => match arg.parse::<u16>() {
+          Ok(arg) => camera.bg_bitmap_n(arg),
+          Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+    "bg-bitmap!" => {
+      match arg {
+        Some(arg) => match arg.parse::<u16>() {
+          Ok(arg) => camera.bg_bitmap_n_now(arg),
+          Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+    "sleep" => {
+      match arg {
+        Some(arg) => match arg.parse::<u16>() {
+          Ok(arg) => camera.sleep(arg),
+          Err(err) => {
+            eprintln!("{:?}", err);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+
+    "hex" => {
+      match arg {
+        Some(arg) => match hex::decode(&arg) {
+          Ok(data) => camera.send_cmd_66(&data),
+          Err(err) => { 
+            eprintln!("Command `{}` not recognized", &cmd);
+            return Err(errno::Errno(nix::errno::Errno::EINVAL as i32));
+          }
+        },
+        None => {
+          eprintln!("Missing argument");
+          return Err(errno::Errno(nix::errno::Errno::EINVAL as i32))
+        }
+      }
+    },
+
+    _ => {
+      eprintln!("Unrecognized command {}", &cmd);
+      return Err(errno::Errno(nix::errno::Errno::EINVAL as i32));
+    }
+  };
+
+  match result {
+    Ok(_) => return Ok(()),
+    Err(error) => panic!("Error {:?}", error)
+  };
+}
+
+fn set(camera : & Camera, params : & [ String ]) -> Result<(), io::Error> {
+  let dev = &camera.dev;
   let mut data = [ 0u8; 60 ];
 
   //hex::decode_to_slice(&params[0][..], &mut data).expect("Decoding failed");
-  let mut decoded = hex::decode(&params[0][..]).expect("Decoding failed");
+  let decoded = hex::decode(&params[0][..]).expect("Decoding failed");
 
   data[..decoded.len()].copy_from_slice(&decoded);
 
-  let result = set_cur(&camera, 0x6, 0x6, &mut data);
+  let result = set_cur(&dev, 0x6, 0x6, &mut data);
   match result {
     Ok(_) => return Ok(()),
     Err(error) => panic!("Error {:?}", error)
   }
 }
 
-
-// 00 01 00 disable replacement
-// 00 01 01 enable replacement
-// 00 01 02 enabe autoframeing
-
-// 01 01 00 HDR off
-// 01 01 01 HRD on
-
-// 03 01 00 FACE AE OFF
-// 03 01 01 FACE AE ON
-
-// 04 01 02 //65 degree view
-// 04 01 01 //78 degree view
-// 04 01 00 //85 degree view
-
-// 05 01 12 blur
-// 05 01 01 solid 
-// 05 01 11 replace
-
-// 06 01xx xx->00-64 (100) blur level
-
-// 07 01 00 button default
-// 07 01 01 button rotation
-
-// 0a 01 00 noise reduction off
-// 0a 01 01 noise reduction on
-
-// 10 01 00 blue
-// 10 01 01 green
-
-// 0d 02 00 ff auto-frame group
-// 0d 02 01 00 auto-frame single close up
-// 0d 02 01 01 auto-frame single upper-body
-
-// 0e 02 00 00 pic 1
-// 0e 02 00 01 pic 2
-// 0e 02 00 02 pic 3
-
-// 0b 02 1e00 autosleep 30s (seconds small byte first)
-// 0b 02 7800 autosleep 2 min
-// 0b 02 5802 autosleep 10 min
-
-
-const CAMERA_BG_SOLID : [ u8 ; 3] = [ 0x05, 0x01, 0x01 ];
-const CAMERA_BG_BITMAP : [ u8 ; 3] = [ 0x05, 0x01, 0x11 ];
-
 const CAMERA_EFFECT_OFF : [ u8 ; 3] = [ 0x0, 0x01, 0x0 ];
 const CAMERA_EFFECT_BG : [ u8 ; 3] = [ 0x0, 0x01, 0x1 ];
 const CAMERA_EFFECT_TRACK : [ u8 ; 3] = [ 0x0, 0x01, 0x2 ];
+
+const CAMERA_HDR_OFF : [ u8 ; 3] = [ 0x01, 0x01, 0x00];
+const CAMERA_HDR_ON  : [ u8 ; 3] = [ 0x01, 0x01, 0x01];
+
+const CAMERA_FACE_AE_OFF : [ u8 ; 3] = [ 0x03,  0x01, 0x00 ];
+const CAMERA_FACE_AE_ON  : [ u8 ; 3] = [ 0x03,  0x01, 0x01 ];
+
+const CAMERA_ANGLE_65 : [ u8 ; 3] = [ 0x04, 0x01, 0x02 ];
+const CAMERA_ANGLE_78 : [ u8 ; 3] = [ 0x01, 0x01, 0x01 ];
+const CAMERA_ANGLE_85 : [ u8 ; 3] = [ 0x01, 0x01, 0x00 ];
+
+const CAMERA_BG_SOLID : [ u8 ; 3] = [ 0x05, 0x01, 0x01 ];
+const CAMERA_BG_BITMAP : [ u8 ; 3] = [ 0x05, 0x01, 0x11 ];
+const CAMERA_BG_BLUR : [ u8 ; 3] = [ 0x05, 0x01, 0x12 ];
+
+const CAMERA_BG_BLUR_LEVEL : [ u8; 2] = [ 0x06, 0x01, ];
+
+const CAMERA_BUTTON_DEFAULT : [ u8; 3] = [ 0x07, 0x01, 0x00 ];
+const CAMERA_BUTTON_ROTATE : [ u8; 3] = [ 0x07, 0x01, 0x01 ];
+
+const CAMERA_NOISE_REDUCTION_OFF : [ u8; 3] = [ 0x0a, 0x01, 0x00 ];
+const CAMERA_NOISE_REDUCTION_ON : [ u8; 3] = [ 0x0a, 0x01, 0x01 ];
+
+const CAMERA_BG_SOLID_BLUE : [ u8; 3] = [ 0x10, 0x01, 0x00 ];
+const CAMERA_BG_SOLID_GREEN : [ u8; 3] = [ 0x10, 0x01, 0x01 ];
+const CAMERA_BG_SOLID_RED : [ u8; 3] = [ 0x10, 0x01, 0x02 ];
+const CAMERA_BG_SOLID_BLACK : [ u8; 3] = [ 0x10, 0x01, 0x03 ];
+const CAMERA_BG_SOLID_WHITE : [ u8; 3] = [ 0x10, 0x01, 0x04 ];
+
+const CAMERA_AUTO_FRAME_GROUP : [ u8; 4] = [ 0x0d, 0x02, 0x00, 0xff ];
+const CAMERA_AUTO_FRAME_FACE : [ u8; 4] = [ 0x0d, 0x02, 0x01, 0x00 ];
+const CAMERA_AUTO_FRAME_BODY : [ u8; 4] = [ 0x0d, 0x02, 0x01, 0x01 ];
+
+const CAMERA_BG_BITMAP_N : [ u8; 2] = [ 0x0e, 0x02, ]; // +2 bytes be
+const CAMERA_BG_BITMAP_0 : [ u8; 4] = [ 0x0e, 0x02, 0x00, 0x00 ]; // 2 bytes be
+const CAMERA_BG_BITMAP_1 : [ u8; 4] = [ 0x0e, 0x02, 0x00, 0x01 ]; // 2 bytes be
+const CAMERA_BG_BITMAP_2 : [ u8; 4] = [ 0x0e, 0x02, 0x00, 0x02 ]; // 2 bytes be
+
+const CAMERA_SLEEP_S : [ u8; 2] = [ 0x0b, 0x02, ]; // +2 bytes le
+const CAMERA_SLEEP_30 : [ u8; 4] = [ 0x0b, 0x02, 0x1e, 0x00 ]; // 2 bytes le
+const CAMERA_SLEEP_120 : [ u8; 4] = [ 0x0b, 0x02, 0x78, 0x00 ]; // 2 bytes le
+const CAMERA_SLEEP_600 : [ u8; 4] = [ 0x0b, 0x02, 0x58, 0x02 ]; // 2 bytes le
+
+const CAMERA_NULL : [ u8; 0] = [];
+//  let seconds : u16 = 30;
+//  data[..cmd.len()].copy_from_slice(seconds.to_le_bytes());
+
+#[derive(Debug)]
+pub struct Camera {
+  dev : std::fs::File
+}
+
+impl Camera {
+  fn new(dev : &str) -> Result<Self, errno::Errno> {
+    return match open_camera(dev) {
+      Ok(camera) => Ok(Self { dev: camera }),
+      Err(err) => Err(err),
+    };
+  }
+
+  fn send_cmd_66(&self, cmd : & [u8]) -> Result<(), Errno> {
+    send_cmd(&self.dev, 0x6, 0x6, cmd)
+  }
+
+  fn send_cmd_66_p(&self, cmd : & [u8], p : & [u8]) -> Result<(), Errno> {
+    send_cmd_p(&self.dev, 0x6, 0x6, cmd, p)
+  }
+
+  fn effect_off(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_EFFECT_OFF)
+  }
+
+  fn effect_bg(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_EFFECT_BG)
+  }
+
+  fn effect_track(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_EFFECT_TRACK)
+  }
+
+  fn hdr_off(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_HDR_OFF)
+  }
+
+  fn hdr_on(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_HDR_ON)
+  }
+
+  fn face_ae_off(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_FACE_AE_OFF)
+  }
+
+  fn face_ae_on(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_FACE_AE_ON)
+  }
+
+  fn angle_65(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_ANGLE_65)
+  }
+
+  fn angle_78(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_ANGLE_78)
+  }
+
+  fn angle_85(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_ANGLE_85)
+  }
+
+  fn bg_solid(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID)
+  }
+
+  fn bg_solid_now(&self) -> Result<(), Errno> {
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn bg_bitmap(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_BITMAP)
+  }
+
+  fn bg_bitmap_now(&self) -> Result<(), Errno> {
+    self.bg_bitmap();
+    self.effect_bg()
+  }
+
+  fn bg_blur(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_BLUR)
+  }
+
+  fn bg_blur_now(&self) -> Result<(), Errno> {
+    self.bg_blur();
+    self.effect_bg()
+  }
+
+  fn blur_level(&self, level : u8) -> Result<(), Errno> {
+    let level = std::cmp::min(64, level);
+    self.send_cmd_66_p(&CAMERA_BG_BLUR_LEVEL, &level.to_le_bytes())
+  }
+
+  fn blur_level_now(&self, level : u8) -> Result<(), Errno> {
+    self.blur_level(level);
+    self.bg_blur();
+    self.effect_bg()
+  }
+
+  fn button_default(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BUTTON_DEFAULT)
+  }
+
+  fn button_rotate(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BUTTON_ROTATE)
+  }
+
+  fn noise_reduction_off(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_NOISE_REDUCTION_OFF)
+  }
+
+  fn noise_reduction_on(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_NOISE_REDUCTION_ON)
+  }
+
+  fn bg_solid_blue(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID_BLUE)
+  }
+
+  fn bg_solid_blue_now(&self) -> Result<(), Errno> {
+    self.bg_solid_blue();
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn bg_solid_green(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID_GREEN)
+  }
+
+  fn bg_solid_green_now(&self) -> Result<(), Errno> {
+    self.bg_solid_green();
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn bg_solid_red(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID_RED)
+  }
+
+  fn bg_solid_red_now(&self) -> Result<(), Errno> {
+    self.bg_solid_red();
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn bg_solid_black(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID_BLACK)
+  }
+
+  fn bg_solid_black_now(&self) -> Result<(), Errno> {
+    self.bg_solid_black();
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn bg_solid_white(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_BG_SOLID_WHITE)
+  }
+
+  fn bg_solid_white_now(&self) -> Result<(), Errno> {
+    self.bg_solid_white();
+    self.bg_solid();
+    self.effect_bg()
+  }
+
+  fn auto_frame_group(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_AUTO_FRAME_GROUP)
+  }
+
+  fn auto_frame_group_now(&self) -> Result<(), Errno> {
+    self.auto_frame_group();
+    self.effect_track()
+  }
+
+  fn auto_frame_face(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_AUTO_FRAME_FACE)
+  }
+
+  fn auto_frame_face_now(&self) -> Result<(), Errno> {
+    self.auto_frame_face();
+    self.effect_track()
+  }
+
+  fn auto_frame_body(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_AUTO_FRAME_BODY)
+  }
+
+  fn auto_frame_body_now(&self) -> Result<(), Errno> {
+    self.auto_frame_body();
+    self.effect_track()
+  }
+
+  fn bg_bitmap_n(&self, n : u16) -> Result<(), Errno> {
+    self.send_cmd_66_p(&CAMERA_BG_BITMAP_N, &n.to_be_bytes())
+  }
+
+  fn bg_bitmap_n_now(&self, n : u16) -> Result<(), Errno> {
+    self.bg_bitmap_n(n);
+    self.bg_bitmap();
+    self.effect_bg()
+  }
+
+  fn sleep(&self, n : u16) -> Result<(), Errno> {
+    self.send_cmd_66_p(&CAMERA_SLEEP_S, &n.to_le_bytes())
+  }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -204,7 +551,7 @@ impl v4l2_capability {
 
     unsafe {
       match ioctl_videoc_querycap(dev.as_raw_fd(), &mut query) {
-        Ok(result) => {
+        Ok(_) => {
           return Ok(query[0]);
         },
         _ => {
@@ -271,7 +618,7 @@ fn uvcioc_get_len(dev : & std::fs::File, unit: u8, selector: u8) -> Result<usize
   }
 }
 
-fn get_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [ u8 ] ) -> Result<(), Errno> {
+fn get_cur(dev : & std::fs::File, unit : u8, selector : u8, data : &mut [ u8 ] ) -> Result<(), Errno> {
   // always call get_len first
   match uvcioc_get_len(&dev, unit, selector) {
     Ok(size) => {
@@ -309,18 +656,49 @@ fn set_cur(dev : &std::fs::File, unit : u8, selector : u8, data : &mut [u8]) -> 
     Err(err) => return Err(err)
   };
 
+  println!("{:?}", data);
+
   return match uvc_io(&dev, unit, selector, UVC_SET_CUR, data) {
     Ok(_) => return Ok(()),
     Err(err) => Err(err)
   }
 }
 
-// Need non-mut version
 fn send_cmd(dev : &std::fs::File, unit : u8, selector : u8, cmd : & [u8]) -> Result<(), Errno> {
   let mut data = [ 0u8; 60 ];
   data[..cmd.len()].copy_from_slice(&cmd);
 
   return set_cur(dev, unit, selector, &mut data);
+}
+
+fn send_cmds(dev : &std::fs::File, unit : u8, selector : u8, cmds : & [& [ u8]]) -> Result<(), Errno> {
+  for cmd in cmds {
+    match send_cmd(dev, unit, selector, cmd) {
+      Ok(_) => (),
+      Err(error) => return Err(error)
+    }
+  }
+  return Ok(())
+}
+
+fn send_cmd_p(dev : &std::fs::File, unit : u8, selector : u8, cmd : & [u8], p : & [u8]) -> Result<(), Errno> {
+  let mut data = [ 0u8; 60 ];
+  data[..cmd.len()].copy_from_slice(&cmd);
+  data[cmd.len()..cmd.len() + p.len()].copy_from_slice(&p);
+  return set_cur(dev, unit, selector, &mut data);
+}
+
+fn send_cmds_p(dev : &std::fs::File, unit : u8, selector : u8, cmds : & [& [ u8]], p : & [u8]) -> Result<(), Errno> {
+  match send_cmd_p(dev,  unit, selector, &cmds[0], &p) {
+      Ok(_) => (),
+      Err(error) => return Err(error)
+  }
+
+  match send_cmds(dev,  unit, selector, &cmds[1..]) {
+      Ok(_) => (),
+      Err(error) => return Err(error)
+  }
+  return Ok(())
 }
 
 struct CameraConfig {
@@ -362,7 +740,7 @@ fn list_usb() -> Result<u8, rusb::Error> {
             let active_config = camera.active_configuration()?;
             println!("Active configuration: {}", active_config);
             let config_desc = device.config_descriptor(0)?;
-            println!("Config desc: {}", active_config);
+            println!("Config desc: {:?}", config_desc);
 
             camera.set_auto_detach_kernel_driver(true)?;
             println!("Claim");
