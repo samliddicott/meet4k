@@ -1,3 +1,4 @@
+use enum_dispatch::enum_dispatch;
 use rusb::{Device as UsbDevice, Context as UsbContext, DeviceDescriptor, DeviceHandle, Direction, TransferType, RequestType, Recipient};
 use std::time::{Duration};
 use std::thread::sleep;
@@ -19,12 +20,18 @@ use glob::MatchOptions;
 //use crate::errno::Errno;
 use hexdump;
 
+#[enum_dispatch(CameraHandleType)]
+trait UvcUsbIo {
+  fn info(&self) -> Result<(), Errno>;
+  fn io(&self, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>;
+}
+
 #[derive(Debug)]
 pub struct UvcCameraHandle {
   handle : std::fs::File,
 }
 
-impl UvcCameraHandle {
+impl UvcUsbIo for UvcCameraHandle {
   fn info(&self) -> Result<(), Errno> {
     match v4l2_capability::new(&self.handle) {
       Ok(video_info) => {
@@ -65,7 +72,7 @@ pub struct UsbCameraHandle {
   handle : DeviceHandle<rusb::GlobalContext>,
 }
 
-impl UsbCameraHandle {
+impl UvcUsbIo for UsbCameraHandle {
   fn info(&self) -> Result<(), Errno> {
     let camera = &self.handle;
 
@@ -101,12 +108,12 @@ impl UsbCameraHandle {
         Ok(size) => size,
         Err(error) => panic!("Can't set config: {:?}", error),
       };
-      println!("Size {}, data {:?}", size, data);
     }
     Ok(0)
   }
 }
 #[derive(Debug)]
+#[enum_dispatch]
 enum CameraHandleType {
  UvcCameraHandle(UvcCameraHandle),
  UsbCameraHandle(UsbCameraHandle)
@@ -233,10 +240,7 @@ impl Camera {
   }
 
   pub fn info(&self) -> Result<(), Errno> {
-    match &self.handle.camera_handle {
-      CameraHandleType::UvcCameraHandle(handle) => handle.info(),
-      CameraHandleType::UsbCameraHandle(handle) => handle.info(),
-    }
+    return self.handle.camera_handle.info();
   }
 
   pub fn dump(&self) -> Result<(), Errno> {
@@ -301,10 +305,7 @@ impl Camera {
   }
 
   fn io(&self, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno> {
-    match &self.handle.camera_handle {
-      CameraHandleType::UvcCameraHandle(handle) => handle.io(unit, selector, query, data),
-      CameraHandleType::UsbCameraHandle(handle) => handle.io(unit, selector, query, data),
-    }
+    return self.handle.camera_handle.io(unit, selector, query, data);
   }
 
   fn send_cmd_p(&self, unit : u8, selector : u8, cmd : & [u8], p : & [u8]) -> Result<(), Errno> {
