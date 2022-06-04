@@ -130,7 +130,7 @@ fn cmd(camera : & Camera, cmd : &str) -> Result<(), Errno> {
     "angle-85" => camera.angle_85(),
     "bg-solid" => camera.bg_solid(),
     "bg-solid!" => camera.bg_solid_now(),
-    "bi-bitmap" => camera.bg_bitmap(),
+    "bg-bitmap" => camera.bg_bitmap(),
     "bg-bitmap!" => camera.bg_bitmap_now(),
     "bg-blur" => camera.bg_blur(),
     "bg-blur!" => camera.bg_blur_now(),
@@ -184,7 +184,7 @@ fn cmd(camera : & Camera, cmd : &str) -> Result<(), Errno> {
     "auto-frame-face!"    => camera.auto_frame_face_now(),
     "auto-frame-body"     => camera.auto_frame_body(),
     "auto-frame-body!"    => camera.auto_frame_body_now(),
-    "bg-bitmap"    => {
+    "bg-bitmap-n"    => {
       match arg {
         Some(arg) => match arg.parse::<u16>() {
           Ok(arg) => camera.bg_bitmap_n(arg),
@@ -199,7 +199,7 @@ fn cmd(camera : & Camera, cmd : &str) -> Result<(), Errno> {
         }
       }
     },
-    "bg-bitmap!" => {
+    "bg-bitmap-n!" => {
       match arg {
         Some(arg) => match arg.parse::<u16>() {
           Ok(arg) => camera.bg_bitmap_n_now(arg),
