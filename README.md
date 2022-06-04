@@ -5,13 +5,15 @@ The first release is in rust, because I wanted something to make me learn rust, 
 
 ## Building
 
-cargo build
+Have rust installed:
+
+    cargo build
 
 ## Running
 
 UVC requires root access right now:
 
-    meet4k <camera-reference> <cmd[=arg]> ...
+    target/debug/meet4k <camera-reference> <cmd[=arg]> ...
 
 camera-reference can be the pathname, e.g. /dev/video10 or a sequence of text that will be matched against the camera *card name* or PCI *bus-info* fields as reported by the UVC interface. 
 
@@ -31,7 +33,7 @@ The shorter version is:
 
     sudo env RUST_BACKTRACE=1 target/debug/meet4k OBSBOT 'bg-solid-green!'
 
-Depending on your shell settings you may need to enclose the commands in '' to protect the exclamation mark from shell interpolation
+Depending on your shell settings you may need to enclose the commands in *single quotes* '...' to protect the exclamation mark from shell interpolation
 
 ## Supported commands
 
@@ -39,19 +41,50 @@ Dump card info and PCI info
 
     meet4k OBSBOT info
 
-Show unit 6 selector 6 memory dump. You can't simply write this back with changes.
+e.g.
+
+    $ sudo env RUST_BACKTRACE=1 target/debug/meet4k /dev/video10 info
+    OBSBOT Meet 4K controller
+    Opened Camera { dev: File { fd: 3, path: "/dev/video10", read: true, write: false } }
+    Card: OBSBOT Meet 4K: OBSBOT Meet 4K 
+    Bus : usb-0000:00:14.0-8.3.1.1
+
+Show unit 6 selector 6 memory dump. (You can't simply write this back with changes, an RPC mechanism is used)
 
     meet4k OBSBOT get
 
-Send an RPC to set some unit 6 selector 6 configuration. The first byte sometimes corresponds to an offset in the configuration. The second byte is the number of bytes to set. The third byte (and maybe 4th byte) are data sometimes little endian, sometimes big endian. This example turns of camera effects
+e.g.
+
+    $ sudo env RUST_BACKTRACE=1 target/debug/meet4k /dev/video10 info
+    OBSBOT Meet 4K controller
+    Opened Camera { dev: File { fd: 3, path: "/dev/video10", read: true, write: false } }
+    |01000100 02114001 0f000102 01000100| ......@......... 00000000
+    |00003c00 00010101 01060000 00000000| ..<............. 00000010
+    |00000000 00000000 00000000 00000000| ................ 00000020
+    |00000000 00000000 00000000|          ............     00000030
+                                                           0000003c
+
+Send an RPC to set some unit 6 selector 6 configuration. The first byte sometimes corresponds to an offset in the configuration. The second byte is the number of bytes to set. The third byte (and maybe 4th byte) are data sometimes little endian, sometimes big endian. 
+
+This example turns of camera effects
 
     meet4k OBSBOT hex=000100
 
-Camera effects
+This example enables tracking mode
 
-    meet4k OBSBOT effect-off
-    meet4k OBSBOT effect-bg    # background replacement
-    meet4k OBSBOT effect-track # face tracking
+    meet4k OBSBOT hex=000102
+
+But there are nicer commands to control camera effects, and they can be chained together
+
+    meet4k OBSBOT effect-off        # act like a dumb webcam with no effects
+    meet4k OBSBOT effect-bg         # background replacement, see sub-commands bg-solid, bg-bitmap, bg-blur for effect to use
+    meet4k OBSBOT effect-track      # face tracking, see auto-frame-group, auto-frame-face, auto-frame-body
+
+    meet4K OBSBOT button-default    # make the camera button do nothing
+    meet4K OBSBOT button-rotate     # make the camera button switch between effect-bg, effect-off and effect-track
+
+    meet4k OBSBOT noise-reduction-off
+    meet4k OBSBOT noise-reduction-on
 
     meet4k OBSBOT hdr-off
     meet4k OBSBOT hdr-on
@@ -59,32 +92,38 @@ Camera effects
     meet4k OBSBOT face-ae-off
     meet4k OBSBOT face-ae-on
 
-    meet4k OBSBOT angle-65
+    meet4k OBSBOT angle-65          # field of view of camera, consider to be "zoom" setting
     meet4k OBSBOT angle-78
     meet4k OBSBOT angle-85
 
-    meet4k OBSBOT bg-solid         # enable solid-colour background, when effect-bg is enabled
-    meet4k OBSBOT bg-solid-blue    # set solid-colour backgroud to blue, effective when bg-solid and effect-bg are enabled
-    meet4k OBSBOT bg-solid-blue!   # set solid-colour backgroud to blue, and enable bg-solid and effect-bg
-    meet4k OBSBOT bg-solid-green   # set solid-colour backgroud to green, effective when bg-solid and effect-bg are enabled
-    meet4k OBSBOT bg-solid-green!  # set solid-colour backgroud to green, and enable bg-solid and effect-bg
-    meet4k OBSBOT bg-solid-red     # set solid-colour backgroud to red, effective when bg-solid and effect-bg are enabled
-    meet4k OBSBOT bg-solid-red!    # set solid-colour backgroud to red, and enable bg-solid and effect-bg
-    meet4k OBSBOT bg-solid-black   # set solid-colour backgroud to black, effective when bg-solid and effect-bg are enabled
-    meet4k OBSBOT bg-solid-black!  # set solid-colour backgroud to black, and enable bg-solid and effect-bg
-    meet4k OBSBOT bg-solid-white   # set solid-colour backgroud to white, effective when bg-solid and effect-bg are enabled
-    meet4k OBSBOT bg-solid-white!  # set solid-colour backgroud to white, and enable bg-solid and effect-bg
+    meet4k OBSBOT bg-solid          # enable solid-colour background, when effect-bg is enabled
+    meet4k OBSBOT bg-solid-blue     # set solid-colour backgroud to blue, effective when bg-solid and effect-bg are enabled
+    meet4k OBSBOT bg-solid-blue!    # set solid-colour backgroud to blue, and enable bg-solid and effect-bg
+    meet4k OBSBOT bg-solid-green    # set solid-colour backgroud to green, effective when bg-solid and effect-bg are enabled
+    meet4k OBSBOT bg-solid-green!   # set solid-colour backgroud to green, and enable bg-solid and effect-bg
+    meet4k OBSBOT bg-solid-red      # set solid-colour backgroud to red, effective when bg-solid and effect-bg are enabled
+    meet4k OBSBOT bg-solid-red!     # set solid-colour backgroud to red, and enable bg-solid and effect-bg
+    meet4k OBSBOT bg-solid-black    # set solid-colour backgroud to black, effective when bg-solid and effect-bg are enabled
+    meet4k OBSBOT bg-solid-black!   # set solid-colour backgroud to black, and enable bg-solid and effect-bg
+    meet4k OBSBOT bg-solid-white    # set solid-colour backgroud to white, effective when bg-solid and effect-bg are enabled
+    meet4k OBSBOT bg-solid-white!   # set solid-colour backgroud to white, and enable bg-solid and effect-bg
 
-    meet4k OBSBOT bg-bitmap        # enable image background replacement, when effect-bg is enabled
-    meet4k OBSBOT bg-bitmap-n=<n>  # set image background replacement to image n, when effect-bg is enabled and bg-bitmap is enabledd
-    meet4k OBSBOT bg-bitmap-n!=<n> # set image background replacement to image n, and enable effect-bg bg-bitmap
+    meet4k OBSBOT bg-bitmap         # enable image background replacement, when effect-bg is enabled
+    meet4k OBSBOT bg-bitmap-n=<n>   # set image background replacement to image n, when effect-bg is enabled and bg-bitmap is enabledd
+    meet4k OBSBOT bg-bitmap-n!=<n>  # set image background replacement to image n, and enable effect-bg bg-bitmap
 
-    meet4k OBSBOT bg-blur          # enable image blurring, when effect-bg is enabled
-    meet4k OBSBOT bg-blur-level=n  # n=0-64 set blur level when bg-blur is enabled and effect-bg is enabled
-    meet4k OBSBOT bg-blur-level!=n # n=0-64 set blur level and enable bg-glur and effect-bg
+    meet4k OBSBOT bg-blur           # enable image blurring, when effect-bg is enabled
+    meet4k OBSBOT bg-blur-level=n   # n=0-64 set blur level when bg-blur is enabled and effect-bg is enabled
+    meet4k OBSBOT bg-blur-level!=n  # n=0-64 set blur level and enable bg-glur and effect-bg
 
+    meet4k OBSBOT auto-frame-group  # track multiple people, when effect-track is enabled
+    meet4k OBSBOT auto-frame-group! # track multiple people, and enable effect-track
+    meet4k OBSBOT auto-frame-face   # track single face, when effect-track is enabled
+    meet4k OBSBOT auto-frame-face!  # track single face, and enable effect-track
+    meet4k OBSBOT auto-frame-body   # track single upper body, when effect-track is enabled
+    meet4k OBSBOT auto-frame-body!  # track single upper body, and enable effect-track
 
-
+    meet4k OBSBOT sleep=<s>         # turn on auto-sleep after s seconds, up to 65535 (I guess, it's t bytes)
 
 
 ## Hacking Info
@@ -94,7 +133,6 @@ Information was gained using wireshark on windows to capture USB packets used to
 Initially libusb control was used, but then I discovered kernel UVC support which allows configuration while the webcam is in use.
 
 Currently support for these options under unit 6, selector 6. Support for uploading images and pan will be added (I have the USB controls captured, I haven't coded it yet)
-
 
     const CAMERA_EFFECT_OFF : [ u8 ; 3] = [ 0x0, 0x01, 0x0 ];
     const CAMERA_EFFECT_BG : [ u8 ; 3] = [ 0x0, 0x01, 0x1 ];
@@ -141,3 +179,5 @@ Currently support for these options under unit 6, selector 6. Support for upload
     const CAMERA_SLEEP_30 : [ u8; 4] = [ 0x0b, 0x02, 0x1e, 0x00 ]; // 2 bytes le
     const CAMERA_SLEEP_120 : [ u8; 4] = [ 0x0b, 0x02, 0x78, 0x00 ]; // 2 bytes le
     const CAMERA_SLEEP_600 : [ u8; 4] = [ 0x0b, 0x02, 0x58, 0x02 ]; // 2 bytes le
+
+Other settings are found capturing different selectors, I still need to list them. They include getting and setting background images, pan and zoom.
