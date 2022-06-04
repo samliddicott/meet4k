@@ -24,11 +24,88 @@ pub struct UvcCameraHandle {
   handle : std::fs::File,
 }
 
+impl UvcCameraHandle {
+  fn info(&self) -> Result<(), Errno> {
+    match v4l2_capability::new(&self.handle) {
+      Ok(video_info) => {
+        println!("Card: {}\nBus : {}",
+                 str::from_utf8(&video_info.card).unwrap(),
+                 str::from_utf8(&video_info.bus_info).unwrap());
+        return Ok(());
+      },
+      _ => {
+        println!("Failed");
+        return Err(errno::Errno(errno()))
+      }
+    }
+  }
+
+  fn io(&self, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>  {
+    let dev = &self.handle;
+
+    let mut query = uvc_xu_control_query {
+      unit: unit,
+      selector: selector,
+      query: query,
+      size: data.len() as u16,
+      data: data.as_mut_ptr()
+    };
+
+    unsafe {
+      match uvcioc_ctrl_query(dev.as_raw_fd(), &mut [query]) {
+        Ok(result) => return Ok(result),
+        _ => return Err(errno::Errno(errno()))
+      }
+    }
+  }
+}
+
 #[derive(Debug)]
 pub struct UsbCameraHandle {
   handle : DeviceHandle<rusb::GlobalContext>,
 }
 
+impl UsbCameraHandle {
+  fn info(&self) -> Result<(), Errno> {
+    let camera = &self.handle;
+
+    let device_desc=camera.device().device_descriptor().unwrap();
+    let product = match camera.read_product_string_ascii(&device_desc) {
+      Ok(text) => text,
+      Err(_) => "unknown".to_string()
+    };
+    let manufacturer = match camera.read_manufacturer_string_ascii(&device_desc) {
+      Ok(text) => text,
+      Err(_) => "unknown".to_string()
+    };
+    println!("Opened device {:04x}:{:04x} {:}, {:}", device_desc.vendor_id(), device_desc.product_id(),
+                                             product, manufacturer);
+    return Ok(())
+  }
+
+  fn io(&self, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>  {
+    let camera = &self.handle;
+    let unit : u16 = (unit as u16) << 8;
+    let selector : u16 = (selector as u16) << 8;
+
+    if query < 128 {
+      let config_request_type = rusb::request_type(Direction::Out, RequestType::Class, Recipient::Interface);
+      let size = match camera.write_control(config_request_type, query, unit, selector, &data, Duration::from_millis(1000)) {
+        Ok(size) => size,
+        Err(error) => panic!("Can't set config: {:?}", error),
+      };
+      println!("Size {}, data {:?}", size, data);
+    } else {
+      let config_request_type =  rusb::request_type(Direction::In, RequestType::Class, Recipient::Interface);
+      let size = match camera.read_control(config_request_type, query, unit, selector, data, Duration::from_millis(1000)) {
+        Ok(size) => size,
+        Err(error) => panic!("Can't set config: {:?}", error),
+      };
+      println!("Size {}, data {:?}", size, data);
+    }
+    Ok(0)
+  }
+}
 #[derive(Debug)]
 enum CameraHandleType {
  UvcCameraHandle(UvcCameraHandle),
@@ -157,8 +234,8 @@ impl Camera {
 
   pub fn info(&self) -> Result<(), Errno> {
     match &self.handle.camera_handle {
-      CameraHandleType::UvcCameraHandle(handle) => uvc_info(&handle.handle),
-      CameraHandleType::UsbCameraHandle(handle) => usb_info(&handle.handle),
+      CameraHandleType::UvcCameraHandle(handle) => handle.info(),
+      CameraHandleType::UsbCameraHandle(handle) => handle.info(),
     }
   }
 
@@ -225,8 +302,8 @@ impl Camera {
 
   fn io(&self, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno> {
     match &self.handle.camera_handle {
-      CameraHandleType::UvcCameraHandle(handle) => uvc_io(&handle.handle, unit, selector, query, data),
-      CameraHandleType::UsbCameraHandle(handle) => usb_io(&handle.handle, unit, selector, query, data),
+      CameraHandleType::UvcCameraHandle(handle) => handle.io(unit, selector, query, data),
+      CameraHandleType::UsbCameraHandle(handle) => handle.io(unit, selector, query, data),
     }
   }
 
@@ -492,38 +569,6 @@ const UVC_GET_LEN  : u8      = 0x85;
 const UVC_GET_INFO : u8      = 0x86;
 const UVC_GET_DEF  : u8      = 0x87;
 
-fn uvc_info(handle : &std::fs::File) -> Result<(), Errno> {
-  match v4l2_capability::new(&handle) {
-    Ok(video_info) => {
-      println!("Card: {}\nBus : {}", 
-               str::from_utf8(&video_info.card).unwrap(), 
-               str::from_utf8(&video_info.bus_info).unwrap());
-      return Ok(());
-    },
-    _ => {
-      println!("Failed");
-      return Err(errno::Errno(errno()))
-    }
-  }
-}
-
-fn uvc_io(dev : & std::fs::File, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>  {
-  let mut query = uvc_xu_control_query { 
-    unit: unit,
-    selector: selector,
-    query: query,
-    size: data.len() as u16,
-    data: data.as_mut_ptr()
-  };
-
-  unsafe {
-    match uvcioc_ctrl_query(dev.as_raw_fd(), &mut [query]) {
-      Ok(result) => return Ok(result),
-      _ => return Err(errno::Errno(errno()))
-    }
-  }
-}
-
 /*
 fn send_cmds(dev : &std::fs::File, unit : u8, selector : u8, cmds : & [& [ u8]]) -> Result<(), Errno> {
   for cmd in cmds {
@@ -578,44 +623,6 @@ pub fn usb_open_camera(hint : &str) -> Result<DeviceHandle<rusb::GlobalContext>,
   }
   return Err(rusb::Error::NoDevice);
 }
-
-fn usb_info(camera : &DeviceHandle<rusb::GlobalContext>) -> Result<(), Errno> {
-  let device_desc=camera.device().device_descriptor().unwrap();
-  let product = match camera.read_product_string_ascii(&device_desc) {
-    Ok(text) => text,
-    Err(_) => "unknown".to_string()
-  };
-  let manufacturer = match camera.read_manufacturer_string_ascii(&device_desc) {
-    Ok(text) => text,
-    Err(_) => "unknown".to_string()
-  };
-  println!("Opened device {:04x}:{:04x} {:}, {:}", device_desc.vendor_id(), device_desc.product_id(),
-                                           product, manufacturer);
-  return Ok(())
-}
-
-fn usb_io(camera : &DeviceHandle<rusb::GlobalContext>, unit: u8, selector: u8, query: u8,  data : &mut [u8]) -> Result<c_int, Errno>  {
-  let unit : u16 = (unit as u16) << 8;
-  let selector : u16 = (selector as u16) << 8;
-
-  if query < 128 {
-    let config_request_type = rusb::request_type(Direction::Out, RequestType::Class, Recipient::Interface);
-    let size = match camera.write_control(config_request_type, query, unit, selector, &data, Duration::from_millis(1000)) {
-      Ok(size) => size,
-      Err(error) => panic!("Can't set config: {:?}", error),
-    };
-    println!("Size {}, data {:?}", size, data);
-  } else {
-    let config_request_type =  rusb::request_type(Direction::In, RequestType::Class, Recipient::Interface);
-    let size = match camera.read_control(config_request_type, query, unit, selector, data, Duration::from_millis(1000)) {
-      Ok(size) => size,
-      Err(error) => panic!("Can't set config: {:?}", error),
-    };
-    println!("Size {}, data {:?}", size, data);
-  }
-  Ok(0)
-}
-
 
 //            println!("Serial: {:}",            camera.read_serial_number_string_ascii(&device_desc)?);
 //            println!("Serial: {:}", device_desc.serial_number_string_index().ok_or(rusb::Error::NotSupported)?);
