@@ -1,23 +1,7 @@
-use rusb::{Device as UsbDevice, Context as UsbContext, DeviceDescriptor, DeviceHandle, Direction, TransferType, RequestType, Recipient};
-use std::time::{Duration};
-use std::thread::sleep;
-use std::io;
-use std::fs::File;
-use nix::{ioctl_read_buf,ioctl_readwrite_buf};
-use nix::errno::{errno};
 use errno::Errno;
-use std::os::unix::io::AsRawFd;
-//use std::fs::OpenOptions;
-//use std::os::unix::fs::OpenOptionsExt;
 use std::env;
 use std::str;
-use nix::libc::{c_int};
-//use nix::libc;
 use hex;
-use glob::glob_with;
-use glob::MatchOptions;
-//use crate::errno::Errno;
-use hexdump;
 
 mod camera;
 
@@ -30,7 +14,10 @@ fn main() {
     Err(err) => panic!("Can't find camera {:?}", err)
   };
 
-  cmds(&camera, &args[2..]);
+  match cmds(&camera, &args[2..]) {
+    Ok(_) => return (),
+    _ => std::process::exit(1),
+  };
 }
 
 pub fn cmds(camera : & camera::Camera, cmds : & [ String ]) -> Result<(), Errno> {
