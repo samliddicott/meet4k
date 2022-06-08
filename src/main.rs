@@ -48,7 +48,7 @@ fn cmd(camera : & camera::Camera, cmd : &str) -> Result<(), Errno> {
     "face-ae-on" => camera.face_ae_on(),
     "angle-65" => camera.angle_65(),
     "angle-78" => camera.angle_78(),
-    "angle-85" => camera.angle_85(),
+    "angle-86" => camera.angle_86(),
     "bg-solid" => camera.bg_solid(),
     "bg-solid!" => camera.bg_solid_now(),
     "bg-bitmap" => camera.bg_bitmap(),

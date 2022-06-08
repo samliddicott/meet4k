@@ -16,16 +16,18 @@ const CAMERA_HDR_ON  : [ u8 ; 3] = [ 0x01, 0x01, 0x01];
 const CAMERA_FACE_AE_OFF : [ u8 ; 3] = [ 0x03,  0x01, 0x00 ];
 const CAMERA_FACE_AE_ON  : [ u8 ; 3] = [ 0x03,  0x01, 0x01 ];
 
+const CAMERA_ANGLE_86 : [ u8 ; 3] = [ 0x04, 0x01, 0x00 ];
+const CAMERA_ANGLE_78 : [ u8 ; 3] = [ 0x04, 0x01, 0x01 ];
 const CAMERA_ANGLE_65 : [ u8 ; 3] = [ 0x04, 0x01, 0x02 ];
-const CAMERA_ANGLE_78 : [ u8 ; 3] = [ 0x01, 0x01, 0x01 ];
-const CAMERA_ANGLE_85 : [ u8 ; 3] = [ 0x01, 0x01, 0x00 ];
 
 const CAMERA_BG_SOLID : [ u8 ; 3] = [ 0x05, 0x01, 0x01 ];
 const CAMERA_BG_BITMAP : [ u8 ; 3] = [ 0x05, 0x01, 0x11 ];
 const CAMERA_BG_BLUR : [ u8 ; 3] = [ 0x05, 0x01, 0x12 ];
 
 const CAMERA_BG_BLUR_LEVEL : [ u8; 2] = [ 0x06, 0x01, ];
-
+// Appears to be read-only, this value is always set to 1
+// ROTATE means single-click rotate CAMERA_EFFECT
+// DEFAULT means some kind of double-click or triple-click is shift CAMERA_EFFECT
 const CAMERA_BUTTON_DEFAULT : [ u8; 3] = [ 0x07, 0x01, 0x00 ];
 const CAMERA_BUTTON_ROTATE : [ u8; 3] = [ 0x07, 0x01, 0x01 ];
 
@@ -135,6 +137,7 @@ impl Camera {
     let mut data = [ 0u8; 60 ];
     data[..cmd.len()].copy_from_slice(&cmd);
     data[cmd.len()..cmd.len() + p.len()].copy_from_slice(&p);
+    hexdump::hexdump(&data);
     return self.set_cur(unit, selector, &mut data);
   }
 
@@ -182,8 +185,8 @@ impl Camera {
     self.send_cmd_66(&CAMERA_ANGLE_78)
   }
 
-  pub fn angle_85(&self) -> Result<(), Errno> {
-    self.send_cmd_66(&CAMERA_ANGLE_85)
+  pub fn angle_86(&self) -> Result<(), Errno> {
+    self.send_cmd_66(&CAMERA_ANGLE_86)
   }
 
   pub fn bg_solid(&self) -> Result<(), Errno> {
