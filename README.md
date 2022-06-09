@@ -1,5 +1,5 @@
 # meet4k
-Control extra features of OBSBOT Meet 4K Camera under Linux
+Control extra features of OBSBOT Meet 4K Camera under Linux. See also guvcview fork for GTK3 UI controls: https://github.com/samliddicott/guvciew-meet4k/tree/meet4k
 
 The first release is in rust, because I wanted something to make me learn rust, but I'll plan to code it as a C library with wxWidget UI app.
 
