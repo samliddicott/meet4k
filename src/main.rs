@@ -107,6 +107,7 @@ fn cmd(camera : & camera::Camera, cmd : &str) -> Result<(), Errno> {
     "auto-frame-face!"    => camera.auto_frame_face_now(),
     "auto-frame-body"     => camera.auto_frame_body(),
     "auto-frame-body!"    => camera.auto_frame_body_now(),
+    "auto-frame-next"     => camera.auto_frame_next(),
     "bg-bitmap-n"    => {
       match arg {
         Some(arg) => match arg.parse::<u16>() {

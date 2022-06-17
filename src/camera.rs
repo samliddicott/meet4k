@@ -345,6 +345,24 @@ impl Camera {
     self.effect_track()
   }
 
+  // If framing isn't on, then turn it on.
+  // If it is on, then switch to the next framing mode
+  pub fn auto_frame_next(&self) -> Result<(), Errno> {
+    let mut data = [ 0u8; 60 ];
+    self.get_cur(0x6, 0x6, &mut data)?;
+    if data[4] == 3 && data[0] == 2 { // auto frame mode
+      let frame : u8 = if data[8] > 3 {
+        0
+      } else {
+        data[8] + 1
+      };
+      self.send_cmd_66_p(&CAMERA_AUTO_FRAME_BODY, &[frame])?;
+      self.effect_track()
+    } else {
+      self.auto_frame_face_now()
+    }
+  }
+
   pub fn bg_bitmap_n(&self, n : u16) -> Result<(), Errno> {
     self.send_cmd_66_p(&CAMERA_BG_BITMAP_N, &n.to_be_bytes())
   }
