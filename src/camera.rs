@@ -16,6 +16,7 @@ const CAMERA_HDR_ON  : [ u8 ; 3] = [ 0x01, 0x01, 0x01];
 const CAMERA_FACE_AE_OFF : [ u8 ; 3] = [ 0x03,  0x01, 0x00 ];
 const CAMERA_FACE_AE_ON  : [ u8 ; 3] = [ 0x03,  0x01, 0x01 ];
 
+const CAMERA_ANGLE : [ u8 ; 2] = [ 0x04, 0x01 ];
 const CAMERA_ANGLE_86 : [ u8 ; 3] = [ 0x04, 0x01, 0x00 ];
 const CAMERA_ANGLE_78 : [ u8 ; 3] = [ 0x04, 0x01, 0x01 ];
 const CAMERA_ANGLE_65 : [ u8 ; 3] = [ 0x04, 0x01, 0x02 ];
@@ -187,6 +188,30 @@ impl Camera {
 
   pub fn angle_86(&self) -> Result<(), Errno> {
     self.send_cmd_66(&CAMERA_ANGLE_86)
+  }
+
+  pub fn angle_next(&self) -> Result<(), Errno> {
+    let mut data = [ 0u8; 60 ];
+    self.get_cur(0x6, 0x6, &mut data)?;
+    let angle : u8 = if data[4] >= 2 {
+      0
+    } else {
+      data[4] + 1
+    };
+
+    self.send_cmd_66_p(&CAMERA_ANGLE, &[angle])
+  }
+
+  pub fn angle_prev(&self) -> Result<(), Errno> {
+    let mut data = [ 0u8; 60 ];
+    self.get_cur(0x6, 0x6, &mut data)?;
+    let angle : u8 = if (data[4] > 2) || (data[4] == 0) {
+      2
+    } else {
+      data[4] - 1
+    };
+
+    self.send_cmd_66_p(&CAMERA_ANGLE, &[angle])
   }
 
   pub fn bg_solid(&self) -> Result<(), Errno> {
